@@ -9,10 +9,29 @@ TCP_SECOND_HANDSHAKE = 2
 TCP_ESTABLISHED = 3
 
 
-pcap_filename = '../wired_android/wired_android_amazon.com_1329408440.26.pcap'
+# pcap_filename = '../wired_firefox/wired_firefox_amazon.com_1329408462.02.pcap'
+# pcap_filename = '../wired_android/wired_android_amazon.com_1329408440.26.pcap'
+pcap_filename = '../t-mobile_android/t-mobile_android_aol.com_1329414398.57.pcap'
+
 domain = "amazon.com"
 
 my_ip = ""
+
+
+# Parse arguments
+# parser = ArgumentParser(description="pcap web parser")
+# parser.add_argument("-f",
+#                     dest="pcap_filename",
+#                     action="store",
+#                     help="pcap file path",
+#                     required=True)
+
+# parser.add_argument("-t", "--trace",
+#                     action="store_true",
+#                     help="Flag for generating a trace")
+
+# Expt parameters
+# args = parser.parse_args()
 
 
 def set_my_ip(ip):
@@ -22,11 +41,9 @@ def set_my_ip(ip):
 
 def parse(filename):
     counter = 0
-    ipcounter = 0
-    tcpcounter = 0
-    udpcounter = 0
     dns_query_counter = 0
     dns_response_counter = 0
+    
 
     events_dict = OrderedDict()
     dst_ip_set = set()
@@ -40,7 +57,6 @@ def parse(filename):
             continue
 
         ip = eth.data
-        ipcounter += 1
 
         src_ip = socket.inet_ntoa(ip.src)
         dst_ip = socket.inet_ntoa(ip.dst)
@@ -50,7 +66,7 @@ def parse(filename):
             if src_ip not in dst_ip_set and dst_ip not in dst_ip_set:
                 print "TCP packet from/to unknown IP, ignore."
                 continue
-            tcpcounter += 1
+            
             tcp = ip.data
 
             if my_ip == src_ip:
@@ -58,21 +74,27 @@ def parse(filename):
             else:
                 connection_name = dst_ip + ':' + str(tcp.dport) + '-' + src_ip + ':' + str(tcp.sport)
 
+            # ignore connection finish packet
+            if tcp.flags & dpkt.tcp.TH_FIN:
+                # print "finish packet "
+                continue
+
             # first handshake
             if connection_name not in tcp_conn_info:
                 if tcp.flags & dpkt.tcp.TH_SYN and not tcp.ack:      
-                    print "new TCP connection: %s" % connection_name
+                    print "* new TCP connection: %s" % connection_name
                     event_name = "TCPCONN_" + connection_name
                     events_dict[event_name] = {"src": src_ip, "dst": dst_ip,
                                                "start_ts": ts, "end_ts": 0,
                                                "bytes_involved": ip.len, "packets_involved": 1,
                                                "ACK_num": 0, "loss_packets": 0}
                     tcp_conn_info[connection_name] = {}
-                    tcp_conn_info[connection_name]["src_seq"] = tcp.seq
+                    tcp_conn_info[connection_name]["src_wait_ack"] = [tcp.seq]
                     tcp_conn_info[connection_name]["src_init_seq"] = tcp.seq
                     tcp_conn_info[connection_name]["status"] = TCP_FIRST_HANDSHAKE
+                    tcp_conn_info[connection_name]["request_counter"] = 0
                 else:
-                    print "No TCP establishment record for this connection, ignore"
+                    print "Error: No TCP establishment record for this connection, ignore"
                     continue
 
             # second handshake
@@ -83,38 +105,121 @@ def parse(filename):
                     events_dict[event_name]["bytes_involved"] += ip.len
                     events_dict[event_name]["packets_involved"] += 1
                     events_dict[event_name]["ACK_num"] += 1
-                    tcp_conn_info[connection_name]["dst_seq"] = tcp.seq
+                    tcp_conn_info[connection_name]["src_wait_ack"].remove(tcp.ack - 1)
+                    tcp_conn_info[connection_name]["dst_wait_ack"] = [tcp.seq]
                     tcp_conn_info[connection_name]["dst_init_seq"] = tcp.seq
                     tcp_conn_info[connection_name]["status"] = TCP_SECOND_HANDSHAKE
                 else:
-                    print "duplicate second handshake packet"
+                    print "Error: duplicate second handshake packet"
                     tcp_conn_info[connection_name]["loss_packets"] += 1
 
             # third handshake, connection established
-            elif connection_name in tcp_conn_info and \
-                     tcp_conn_info[connection_name]["status"] == TCP_SECOND_HANDSHAKE and \
-                     tcp.seq - tcp_conn_info[connection_name]["src_init_seq"] == 1:
+            elif tcp_conn_info[connection_name]["status"] == TCP_SECOND_HANDSHAKE and \
+                 len(tcp.data) == 0:
                 print "TCP connection established"
                 event_name = "TCPCONN_" + connection_name
-                
                 events_dict[event_name]["end_ts"] = ts
                 events_dict[event_name]["bytes_involved"] += ip.len
                 events_dict[event_name]["packets_involved"] += 1
                 events_dict[event_name]["ACK_num"] += 1
-                tcp_conn_info[connection_name]["src_seq"] = tcp.seq
+                tcp_conn_info[connection_name]["dst_wait_ack"].remove(tcp.ack - 1)
                 tcp_conn_info[connection_name]["status"] = TCP_ESTABLISHED
 
             # data transmition
             elif tcp_conn_info[connection_name]["status"] == TCP_ESTABLISHED:
-                if tcp.dport == 80 and len(tcp.data) > 0:
-                    http_request = dpkt.http.Request(tcp.data)
-                    print http.uri
+                # src -> dst
+                if tcp.dport == 80:
+                    # HTTP request
+                    if len(tcp.data) > 0:
+                        # print "seq", tcp.seq, "len", len(tcp.data)
+                        if tcp.seq + len(tcp.data) not in tcp_conn_info[connection_name]["src_wait_ack"]:
+                            tcp_conn_info[connection_name]["request_counter"] += 1
+                            tcp_conn_info[connection_name]["src_wait_ack"].append(tcp.seq + len(tcp.data))
+                            # http_request = dpkt.http.Request(tcp.data)
+                            print "- new object request"
+                            # print "- new object request", http_request.uri
+                            event_name = "OBJREQ_" + connection_name + '_' + \
+                                         str(tcp_conn_info[connection_name]["request_counter"])
+                            events_dict[event_name] = {"src": src_ip, "dst": dst_ip,
+                                                       "start_ts": ts, "end_ts": 0,
+                                                       "bytes_involved": ip.len, "packets_involved": 1,
+                                                       "ACK_num": 0, "loss_packets": 0}
+                            # print tcp_conn_info[connection_name]["src_wait_ack"]
+                        else:
+                            print "Retransmit HTTP request"
+                            event_name = "OBJREQ_" + connection_name + '_' + \
+                                         str(tcp_conn_info[connection_name]["request_counter"])
+                            events_dict[event_name]["loss_packets"] += 1
+
+                    # HTTP response ACK
+                    else:
+                        if tcp.ack in tcp_conn_info[connection_name]["dst_wait_ack"]:
+                            # print "ack"
+                            tcp_conn_info[connection_name]["dst_wait_ack"].remove(tcp.ack)
+                            event_name = "OBJREQ_" + connection_name + '_' + \
+                                         str(tcp_conn_info[connection_name]["request_counter"])
+                            events_dict[event_name]["ACK_num"] += 1
+                            events_dict[event_name]["packets_involved"] += 1
+                            events_dict[event_name]["bytes_involved"] += ip.len
+                            events_dict[event_name]["end_ts"] = ts
+                        elif len(tcp_conn_info[connection_name]["dst_wait_ack"]) == 0 or \
+                             tcp.ack > max(tcp_conn_info[connection_name]["dst_wait_ack"]):
+                            continue
+                        else:
+                            print "Retransmit HTTP response ACK", tcp.ack
+                            event_name = "OBJREQ_" + connection_name + '_' + \
+                                         str(tcp_conn_info[connection_name]["request_counter"])
+                            events_dict[event_name]["loss_packets"] += 1
+                            events_dict[event_name]["packets_involved"] += 1
+
+                # des -> src
+                elif tcp.sport == 80:
+                    # HTTP response
+                    if len(tcp.data) > 0:
+                        # print "seq", tcp.seq, "len", len(tcp.data)
+                        if tcp.seq + len(tcp.data) not in tcp_conn_info[connection_name]["dst_wait_ack"]:
+                            tcp_conn_info[connection_name]["dst_wait_ack"].append(tcp.seq + len(tcp.data))
+                            event_name = "OBJREQ_" + connection_name + '_' + \
+                                         str(tcp_conn_info[connection_name]["request_counter"])
+                            events_dict[event_name]["packets_involved"] += 1
+                            events_dict[event_name]["bytes_involved"] += ip.len
+                            # print tcp_conn_info[connection_name]["dst_wait_ack"]
+                        else:
+                            print "Retransmit HTTP response"
+                            event_name = "OBJREQ_" + connection_name + '_' + \
+                                         str(tcp_conn_info[connection_name]["request_counter"])
+                            events_dict[event_name]["loss_packets"] += 1
+
+                    # HTTP request ACK
+                    else:
+                        if tcp.ack in tcp_conn_info[connection_name]["src_wait_ack"]:
+                            # print "ack"
+                            tcp_conn_info[connection_name]["src_wait_ack"].remove(tcp.ack)
+                            event_name = "OBJREQ_" + connection_name + '_' + \
+                                         str(tcp_conn_info[connection_name]["request_counter"])
+                            events_dict[event_name]["ACK_num"] += 1
+                            events_dict[event_name]["packets_involved"] += 1
+                            events_dict[event_name]["bytes_involved"] += ip.len
+                        elif len(tcp_conn_info[connection_name]["src_wait_ack"]) == 0 or \
+                             tcp.ack > max(tcp_conn_info[connection_name]["src_wait_ack"]):
+                            continue
+                        else:
+                            print "Retransmit HTTP request ACK", tcp.ack
+                            event_name = "OBJREQ_" + connection_name + '_' + \
+                                         str(tcp_conn_info[connection_name]["request_counter"])
+                            events_dict[event_name]["loss_packets"] += 1
+                            events_dict[event_name]["packets_involved"] += 1
+
+                #
+                else:
+                    print "Error: unknown HTTP packet"
+                    continue
             else:
-                print "unknown TCP status"
+                print "Error: unknown TCP status"
                 continue
 
         if ip.p == dpkt.ip.IP_PROTO_UDP:
-            udpcounter += 1
+            
             udp = ip.data
 
             # ensure this is DNS packet
@@ -123,7 +228,7 @@ def parse(filename):
             dns = dpkt.dns.DNS(udp.data)
             if dns.qr == dpkt.dns.DNS_Q:  # DNS query packet
                 if dns.opcode != dpkt.dns.DNS_QUERY:
-                    print "? no DNS_QUERY, opcode: ", dns.opcode
+                    print "Error: no DNS_QUERY, opcode: ", dns.opcode
                     continue
                 if len(dns.qd) != 1:
                     continue
@@ -148,7 +253,7 @@ def parse(filename):
                 dns_query_counter += 1
             else: # DNS reply packet
                 if dns.opcode != dpkt.dns.DNS_QUERY:
-                    print "? no DNS_QUERY, opcode: ", dns.opcode
+                    print "Error: no DNS_QUERY, opcode: ", dns.opcode
                     continue
                 if dns.rcode != dpkt.dns.DNS_RCODE_NOERR:
                     continue
@@ -172,12 +277,9 @@ def parse(filename):
                 events_dict[event_name]["bytes_involved"] += ip.len
                 events_dict[event_name]["packets_involved"] += 1
 
-    print "**************"
-
     print "Total number of packets in the pcap file: ", counter
-    print "Total number of ip packets: ", ipcounter
-    print "Total number of tcp packets: ", tcpcounter
-    print "Total number of udp packets: ", udpcounter
+
+    print "**************"
 
     for event_name, event_record in events_dict.iteritems():
         if event_name[:3] == "DNS":
@@ -192,6 +294,13 @@ def parse(filename):
                     event_record["start_ts"], event_record["end_ts"],
                     event_record["bytes_involved"], event_record["packets_involved"],
                     event_record["ACK_num"], event_record["loss_packets"])
+        elif event_name[:6] == "OBJREQ":
+            print '<%s, %s, %s, %s, %s, %d, %d, %d, %d>' % (event_name,
+                    event_record["src"], event_record["dst"], 
+                    event_record["start_ts"], event_record["end_ts"],
+                    event_record["bytes_involved"], event_record["packets_involved"],
+                    event_record["ACK_num"], event_record["loss_packets"])
+            # print "downloading object cost", event_record["end_ts"] - event_record["start_ts"]
 
 if __name__ == "__main__":
     parse(pcap_filename)
