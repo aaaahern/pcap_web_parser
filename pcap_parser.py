@@ -10,24 +10,12 @@ TCP_FIRST_HANDSHAKE = 1
 TCP_SECOND_HANDSHAKE = 2 
 TCP_ESTABLISHED = 3
 
-my_ip = ""
 
-trace = False
-
-def set_my_ip(ip):
-    global my_ip
-    global trace
-    if trace:
-        print "*** Set my ip as:", ip
-    my_ip = ip
-
-def parse(filename, trace_opt=False):
-    global trace
-    trace = trace_opt
+def parse(filename, trace=False):
+    my_ip = ""
     counter = 0
     dns_query_counter = 0
     dns_response_counter = 0
-    
 
     events_dict = OrderedDict()
     dst_ip_set = set()
@@ -99,7 +87,7 @@ def parse(filename, trace_opt=False):
                 else:
                     if trace:
                         print "Error: duplicate second handshake packet"
-                    tcp_conn_info[connection_name]["loss_packets"] += 1
+                    events_dict[event_name]["loss_packets"] += 1
 
             # third handshake, connection established
             elif tcp_conn_info[connection_name]["status"] == TCP_SECOND_HANDSHAKE and \
@@ -111,7 +99,8 @@ def parse(filename, trace_opt=False):
                 events_dict[event_name]["bytes_involved"] += ip.len
                 events_dict[event_name]["packets_involved"] += 1
                 events_dict[event_name]["ACK_num"] += 1
-                tcp_conn_info[connection_name]["dst_wait_ack"].remove(tcp.ack - 1)
+                if tcp.ack - 1 in tcp_conn_info[connection_name]["dst_wait_ack"]:
+                    tcp_conn_info[connection_name]["dst_wait_ack"].remove(tcp.ack - 1)
                 tcp_conn_info[connection_name]["status"] = TCP_ESTABLISHED
 
             # data transmition
@@ -175,6 +164,7 @@ def parse(filename, trace_opt=False):
                                          str(tcp_conn_info[connection_name]["request_counter"])
                             events_dict[event_name]["packets_involved"] += 1
                             events_dict[event_name]["bytes_involved"] += ip.len
+                            events_dict[event_name]["end_ts"] = ts
                             # print tcp_conn_info[connection_name]["dst_wait_ack"]
                         else:
                             if trace:
@@ -193,6 +183,7 @@ def parse(filename, trace_opt=False):
                             events_dict[event_name]["ACK_num"] += 1
                             events_dict[event_name]["packets_involved"] += 1
                             events_dict[event_name]["bytes_involved"] += ip.len
+                            events_dict[event_name]["end_ts"] = ts
                         elif len(tcp_conn_info[connection_name]["src_wait_ack"]) == 0 or \
                              tcp.ack > max(tcp_conn_info[connection_name]["src_wait_ack"]):
                             continue
@@ -239,7 +230,9 @@ def parse(filename, trace_opt=False):
                     continue
 
                 if my_ip == "":
-                    set_my_ip(socket.inet_ntoa(ip.src))
+                    if trace:
+                        print "*** Set my ip as:", socket.inet_ntoa(ip.src)
+                    my_ip = socket.inet_ntoa(ip.src)
 
                 if trace:
                     print dns.id, "DNS query:", dns.qd[0].name
@@ -273,6 +266,8 @@ def parse(filename, trace_opt=False):
                     elif answer.type == dpkt.dns.DNS_PTR:
                         pass#print dns.id, "PTR request", answer.name, "\tresponse", answer.ptrname
                 event_name = "DNS_" + str(dns.id)
+                if event_name not in events_dict:
+                    continue
                 events_dict[event_name]["end_ts"] = ts
                 events_dict[event_name]["bytes_involved"] += ip.len
                 events_dict[event_name]["packets_involved"] += 1
@@ -281,29 +276,26 @@ def parse(filename, trace_opt=False):
         print "Total number of packets in the pcap file: ", counter
         print "**************"
 
-    for event_name, event_record in events_dict.iteritems():
-        if event_name[:3] == "DNS":
-            print '<DNS request, %s, %s, %s, %s, %d, %d, %d, %d>' % (
-                    event_record["src"], event_record["dst"], 
-                    event_record["start_ts"], event_record["end_ts"],
-                    event_record["bytes_involved"], event_record["packets_involved"],
-                    event_record["ACK_num"], event_record["loss_packets"])
-        elif event_name[:7] == "TCPCONN":
-            print '<%s, %s, %s, %s, %s, %d, %d, %d, %d>' % (event_name,
-                    event_record["src"], event_record["dst"], 
-                    event_record["start_ts"], event_record["end_ts"],
-                    event_record["bytes_involved"], event_record["packets_involved"],
-                    event_record["ACK_num"], event_record["loss_packets"])
-        elif event_name[:6] == "OBJREQ":
-            print '<%s, %s, %s, %s, %s, %d, %d, %d, %d>' % (event_name,
-                    event_record["src"], event_record["dst"], 
-                    event_record["start_ts"], event_record["end_ts"],
-                    event_record["bytes_involved"], event_record["packets_involved"],
-                    event_record["ACK_num"], event_record["loss_packets"])
-            # print "downloading object cost", event_record["end_ts"] - event_record["start_ts"]
+    return events_dict
 
 if __name__ == "__main__":
-    # pcap_filename = '../wired_firefox/wired_firefox_amazon.com_1329408462.02.pcap'
-    # pcap_filename = '../wired_android/wired_android_amazon.com_1329408440.26.pcap'
-    pcap_filename = '../t-mobile_android/t-mobile_android_aol.com_1329414398.57.pcap'
-    parse(pcap_filename)
+    # pcap_filename = '../pcaps/wired_firefox/wired_firefox_twitter.com_1329407814.16.pcap'
+    # pcap_filename = '../pcaps/wired_android/wired_android_google.com_1329407050.8.pcap'
+    # pcap_filename = '../pcaps/t-mobile_android/t-mobile_android_aol.com_1329414398.57.pcap'
+    pcap_filename = '../pcaps/verizon_firefox/verizon_firefox_cnn.com_1329847035.7.pcap'
+
+
+    # pcap_filename = '../pcaps/t-mobile_android/t-mobile_android_amazon.com_1329408864.54.pcap'
+    # pcap_filename = '../pcaps/t-mobile_firefox/t-mobile_firefox_amazon.com_1329408898.08.pcap'
+    # pcap_filename = '../pcaps/verizon_firefox/verizon_firefox_amazon.com_1329845890.47.pcap'
+    # pcap_filename = '../pcaps/wired_android/wired_android_amazon.com_1329408440.26.pcap'
+    # pcap_filename = '../pcaps/wired_firefox/wired_firefox_amazon.com_1329408462.02.pcap'
+
+
+    events_dict = parse(pcap_filename)
+    for event_name, event in events_dict.iteritems():
+        # print event_name, event["src"], event["dst"], event["start_ts"], event["end_ts"], event["loss_packets"]
+        if "OBJ" in event_name and "59060" in event_name:
+            if event["end_ts"] == 0:
+                print "unfinished event:"
+            print event_name, event["bytes_involved"]
