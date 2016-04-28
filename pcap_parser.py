@@ -3,43 +3,27 @@
 import dpkt
 import socket
 from collections import OrderedDict 
+from argparse import ArgumentParser
+
 
 TCP_FIRST_HANDSHAKE = 1
 TCP_SECOND_HANDSHAKE = 2 
 TCP_ESTABLISHED = 3
 
-
-# pcap_filename = '../wired_firefox/wired_firefox_amazon.com_1329408462.02.pcap'
-# pcap_filename = '../wired_android/wired_android_amazon.com_1329408440.26.pcap'
-pcap_filename = '../t-mobile_android/t-mobile_android_aol.com_1329414398.57.pcap'
-
-domain = "amazon.com"
-
 my_ip = ""
 
-
-# Parse arguments
-# parser = ArgumentParser(description="pcap web parser")
-# parser.add_argument("-f",
-#                     dest="pcap_filename",
-#                     action="store",
-#                     help="pcap file path",
-#                     required=True)
-
-# parser.add_argument("-t", "--trace",
-#                     action="store_true",
-#                     help="Flag for generating a trace")
-
-# Expt parameters
-# args = parser.parse_args()
-
+trace = False
 
 def set_my_ip(ip):
     global my_ip
-    print "*** Set my ip as:", ip
+    global trace
+    if trace:
+        print "*** Set my ip as:", ip
     my_ip = ip
 
-def parse(filename):
+def parse(filename, trace_opt=False):
+    global trace
+    trace = trace_opt
     counter = 0
     dns_query_counter = 0
     dns_response_counter = 0
@@ -64,7 +48,8 @@ def parse(filename):
         # http://www.iana.org/assignments/protocol-numbers/protocol-numbers.xhtml
         if my_ip != "" and ip.p == dpkt.ip.IP_PROTO_TCP: 
             if src_ip not in dst_ip_set and dst_ip not in dst_ip_set:
-                print "TCP packet from/to unknown IP, ignore."
+                if trace:
+                    print "TCP packet from/to unknown IP, ignore."
                 continue
             
             tcp = ip.data
@@ -81,8 +66,9 @@ def parse(filename):
 
             # first handshake
             if connection_name not in tcp_conn_info:
-                if tcp.flags & dpkt.tcp.TH_SYN and not tcp.ack:      
-                    print "* new TCP connection: %s" % connection_name
+                if tcp.flags & dpkt.tcp.TH_SYN and not tcp.ack:    
+                    if trace:  
+                        print "* new TCP connection: %s" % connection_name
                     event_name = "TCPCONN_" + connection_name
                     events_dict[event_name] = {"src": src_ip, "dst": dst_ip,
                                                "start_ts": ts, "end_ts": 0,
@@ -94,7 +80,8 @@ def parse(filename):
                     tcp_conn_info[connection_name]["status"] = TCP_FIRST_HANDSHAKE
                     tcp_conn_info[connection_name]["request_counter"] = 0
                 else:
-                    print "Error: No TCP establishment record for this connection, ignore"
+                    if trace:
+                        print "Error: No TCP establishment record for this connection, ignore"
                     continue
 
             # second handshake
@@ -110,13 +97,15 @@ def parse(filename):
                     tcp_conn_info[connection_name]["dst_init_seq"] = tcp.seq
                     tcp_conn_info[connection_name]["status"] = TCP_SECOND_HANDSHAKE
                 else:
-                    print "Error: duplicate second handshake packet"
+                    if trace:
+                        print "Error: duplicate second handshake packet"
                     tcp_conn_info[connection_name]["loss_packets"] += 1
 
             # third handshake, connection established
             elif tcp_conn_info[connection_name]["status"] == TCP_SECOND_HANDSHAKE and \
                  len(tcp.data) == 0:
-                print "TCP connection established"
+                if trace:
+                    print "TCP connection established"
                 event_name = "TCPCONN_" + connection_name
                 events_dict[event_name]["end_ts"] = ts
                 events_dict[event_name]["bytes_involved"] += ip.len
@@ -136,7 +125,8 @@ def parse(filename):
                             tcp_conn_info[connection_name]["request_counter"] += 1
                             tcp_conn_info[connection_name]["src_wait_ack"].append(tcp.seq + len(tcp.data))
                             # http_request = dpkt.http.Request(tcp.data)
-                            print "- new object request"
+                            if trace:
+                                print "- new object request"
                             # print "- new object request", http_request.uri
                             event_name = "OBJREQ_" + connection_name + '_' + \
                                          str(tcp_conn_info[connection_name]["request_counter"])
@@ -146,7 +136,8 @@ def parse(filename):
                                                        "ACK_num": 0, "loss_packets": 0}
                             # print tcp_conn_info[connection_name]["src_wait_ack"]
                         else:
-                            print "Retransmit HTTP request"
+                            if trace:
+                                print "Retransmit HTTP request"
                             event_name = "OBJREQ_" + connection_name + '_' + \
                                          str(tcp_conn_info[connection_name]["request_counter"])
                             events_dict[event_name]["loss_packets"] += 1
@@ -166,7 +157,8 @@ def parse(filename):
                              tcp.ack > max(tcp_conn_info[connection_name]["dst_wait_ack"]):
                             continue
                         else:
-                            print "Retransmit HTTP response ACK", tcp.ack
+                            if trace:
+                                print "Retransmit HTTP response ACK", tcp.ack
                             event_name = "OBJREQ_" + connection_name + '_' + \
                                          str(tcp_conn_info[connection_name]["request_counter"])
                             events_dict[event_name]["loss_packets"] += 1
@@ -185,7 +177,8 @@ def parse(filename):
                             events_dict[event_name]["bytes_involved"] += ip.len
                             # print tcp_conn_info[connection_name]["dst_wait_ack"]
                         else:
-                            print "Retransmit HTTP response"
+                            if trace:
+                                print "Retransmit HTTP response"
                             event_name = "OBJREQ_" + connection_name + '_' + \
                                          str(tcp_conn_info[connection_name]["request_counter"])
                             events_dict[event_name]["loss_packets"] += 1
@@ -204,7 +197,8 @@ def parse(filename):
                              tcp.ack > max(tcp_conn_info[connection_name]["src_wait_ack"]):
                             continue
                         else:
-                            print "Retransmit HTTP request ACK", tcp.ack
+                            if trace:
+                                print "Retransmit HTTP request ACK", tcp.ack
                             event_name = "OBJREQ_" + connection_name + '_' + \
                                          str(tcp_conn_info[connection_name]["request_counter"])
                             events_dict[event_name]["loss_packets"] += 1
@@ -212,10 +206,12 @@ def parse(filename):
 
                 #
                 else:
-                    print "Error: unknown HTTP packet"
+                    if trace:
+                        print "Error: unknown HTTP packet"
                     continue
             else:
-                print "Error: unknown TCP status"
+                if trace:
+                    print "Error: unknown TCP status"
                 continue
 
         if ip.p == dpkt.ip.IP_PROTO_UDP:
@@ -228,7 +224,8 @@ def parse(filename):
             dns = dpkt.dns.DNS(udp.data)
             if dns.qr == dpkt.dns.DNS_Q:  # DNS query packet
                 if dns.opcode != dpkt.dns.DNS_QUERY:
-                    print "Error: no DNS_QUERY, opcode: ", dns.opcode
+                    if trace:
+                        print "Error: no DNS_QUERY, opcode: ", dns.opcode
                     continue
                 if len(dns.qd) != 1:
                     continue
@@ -244,7 +241,8 @@ def parse(filename):
                 if my_ip == "":
                     set_my_ip(socket.inet_ntoa(ip.src))
 
-                print dns.id, "DNS query:", dns.qd[0].name
+                if trace:
+                    print dns.id, "DNS query:", dns.qd[0].name
                 
                 events_dict["DNS_" + str(dns.id)] = {"src": src_ip, "dst": dst_ip,
                                                      "start_ts": ts, "end_ts": 0,
@@ -265,11 +263,13 @@ def parse(filename):
                 # ref: http://en.wikipedia.org/wiki/List_of_DNS_record_types
                 for answer in dns.an:
                     if answer.type == dpkt.dns.DNS_CNAME:
-                        print dns.id, "CNAME request", answer.name, "\tresponse", answer.cname
+                        if trace:
+                            print dns.id, "CNAME request", answer.name, "\tresponse", answer.cname
                     elif answer.type == dpkt.dns.DNS_A:
                         ip_addr = socket.inet_ntoa(answer.rdata)
                         dst_ip_set.add(ip_addr)
-                        print dns.id, "A request", answer.name, "\tresponse", ip_addr
+                        if trace:
+                            print dns.id, "A request", answer.name, "\tresponse", ip_addr
                     elif answer.type == dpkt.dns.DNS_PTR:
                         pass#print dns.id, "PTR request", answer.name, "\tresponse", answer.ptrname
                 event_name = "DNS_" + str(dns.id)
@@ -277,9 +277,9 @@ def parse(filename):
                 events_dict[event_name]["bytes_involved"] += ip.len
                 events_dict[event_name]["packets_involved"] += 1
 
-    print "Total number of packets in the pcap file: ", counter
-
-    print "**************"
+    if trace:
+        print "Total number of packets in the pcap file: ", counter
+        print "**************"
 
     for event_name, event_record in events_dict.iteritems():
         if event_name[:3] == "DNS":
@@ -303,4 +303,7 @@ def parse(filename):
             # print "downloading object cost", event_record["end_ts"] - event_record["start_ts"]
 
 if __name__ == "__main__":
+    # pcap_filename = '../wired_firefox/wired_firefox_amazon.com_1329408462.02.pcap'
+    # pcap_filename = '../wired_android/wired_android_amazon.com_1329408440.26.pcap'
+    pcap_filename = '../t-mobile_android/t-mobile_android_aol.com_1329414398.57.pcap'
     parse(pcap_filename)
