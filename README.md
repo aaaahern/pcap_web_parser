@@ -1,6 +1,6 @@
 # pcap_web_parser
 
-## Background
+### Background
 A web download session starts with a primary page download followed by downloads of a lot of different objects which make the entire page. A web session can roughly be divided into the following stages in a simplified setup:
 
 a. Initial DNS request and response
@@ -11,7 +11,7 @@ e. Across each connection to a particular site, the client browser will download
 f. One might repeat steps c,d,e multiple times. For example, if a downloaded object is a javascript file, it can issue new requests to new domains.
 g. Finally when all the objects are done, there is a finish stage.
 
-## Parser Introduction
+### Parser Introduction
 
 This parser is used to parse the pcap file which contains all packets in a web download session, produce and analyze events of web download session. 
 
@@ -25,3 +25,4 @@ There are three kinds of events:
 3. Object request on established connection
 
 Example output:
+![Parser Output](https://raw.githubusercontent.com/aaaahern/pcap_web_parser/master/parser%20output.png)
