@@ -294,8 +294,5 @@ if __name__ == "__main__":
 
     events_dict = parse(pcap_filename)
     for event_name, event in events_dict.iteritems():
-        # print event_name, event["src"], event["dst"], event["start_ts"], event["end_ts"], event["loss_packets"]
-        if "OBJ" in event_name and "59060" in event_name:
-            if event["end_ts"] == 0:
-                print "unfinished event:"
-            print event_name, event["bytes_involved"]
+        print event_name, event["src"], event["dst"], event["start_ts"], event["end_ts"], event["loss_packets"]
+        
